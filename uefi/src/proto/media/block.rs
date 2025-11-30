@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Block I/O protocols.
+//! Block I/O protocols [`BlockIO`] and [`BlockIO2`].
+
+use core::ptr::NonNull;
 
 use crate::proto::unsafe_protocol;
-use crate::{Result, StatusExt};
+use crate::util::opt_nonnull_to_ptr;
+use crate::{Event, Result, Status, StatusExt};
 
-pub use uefi_raw::protocol::block::{BlockIoProtocol, Lba};
+pub use uefi_raw::protocol::block::{BlockIo2Protocol, BlockIoProtocol, Lba};
 
 /// Block I/O [`Protocol`].
 ///
@@ -184,5 +187,77 @@ impl BlockIOMedia {
     #[must_use]
     pub const fn optimal_transfer_length_granularity(&self) -> u32 {
         self.0.optimal_transfer_length_granularity
+    }
+}
+
+/// Asynchronous transaction token for Block I/O 2 operations.
+#[repr(C)]
+#[derive(Debug)]
+pub struct BlockIO2Token {
+    /// Event to be signalled when an asynchronous block I/O operation
+    /// completes.
+    pub event: Option<Event>,
+    /// Transaction status code.
+    pub transaction_status: Status,
+}
+
+/// Block I/O 2 [`Protocol`].
+///
+/// The Block I/O 2 protocol defines an extension to the Block I/O protocol
+/// which enables the ability to read and write data at a block level in a
+/// non-blocking manner.
+///
+/// [`Protocol`]: uefi::proto::Protocol
+#[derive(Debug)]
+#[repr(transparent)]
+#[unsafe_protocol(BlockIo2Protocol::GUID)]
+pub struct BlockIO2(BlockIo2Protocol);
+
+impl BlockIO2 {
+    /// Pointer for block IO media.
+    #[must_use]
+    pub const fn media(&self) -> &BlockIOMedia {
+        unsafe { &*self.0.media.cast::<BlockIOMedia>() }
+    }
+
+    ///
+    pub fn reset(&mut self, extended_verification: bool) -> Result {
+        unsafe { (self.0.reset)(&mut self.0, extended_verification.into()) }.to_result()
+    }
+
+    ///
+    pub fn read_blocks_ex(
+        &self,
+        media_id: u32,
+        lba: Lba,
+        token: Option<NonNull<BlockIO2Token>>,
+        len: usize,
+        buffer: *mut u8,
+    ) -> Result {
+        let token = opt_nonnull_to_ptr(token);
+        unsafe { (self.0.read_blocks_ex)(&self.0, media_id, lba, token.cast(), len, buffer.cast()) }
+            .to_result()
+    }
+
+    ///
+    pub fn write_blocks_ex(
+        &mut self,
+        media_id: u32,
+        lba: Lba,
+        token: Option<NonNull<BlockIO2Token>>,
+        len: usize,
+        buffer: *const u8,
+    ) -> Result {
+        let token = opt_nonnull_to_ptr(token);
+        unsafe {
+            (self.0.write_blocks_ex)(&mut self.0, media_id, lba, token.cast(), len, buffer.cast())
+        }
+        .to_result()
+    }
+
+    ///
+    pub fn flush_blocks_ex(&mut self, token: Option<NonNull<BlockIO2Token>>) -> Result {
+        let token = opt_nonnull_to_ptr(token);
+        unsafe { (self.0.flush_blocks_ex)(&mut self.0, token.cast()) }.to_result()
     }
 }
